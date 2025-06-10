@@ -17,6 +17,11 @@ class ArxivPaper:
     def __init__(self,paper:arxiv.Result):
         self._paper = paper
         self.score = None
+        self.use_llm = True
+
+    def disable_llm(self):
+        self.use_llm = False
+        return
     
     @property
     def title(self) -> str:
@@ -63,7 +68,7 @@ class ArxivPaper:
         return repo_list['results'][0]['url']
     
     @cached_property
-    def tex(self) -> dict[str,str]:
+    def tex(self) -> dict[str, str]:
         with ExitStack() as stack:
             tmpdirname = stack.enter_context(TemporaryDirectory())
             file = self._paper.download_source(dirpath=tmpdirname)
@@ -134,6 +139,9 @@ class ArxivPaper:
     
     @cached_property
     def tldr(self) -> str:
+        if not self.use_llm:
+            return ''
+
         introduction = ""
         conclusion = ""
         if self.tex is not None:
@@ -183,10 +191,15 @@ class ArxivPaper:
                 {"role": "user", "content": prompt},
             ]
         )
+
         return tldr
 
     @cached_property
     def affiliations(self) -> Optional[list[str]]:
+        affiliations = ['']
+        if not self.use_llm:
+            return affiliations
+
         if self.tex is not None:
             content = self.tex.get("all")
             if content is None:
@@ -225,4 +238,5 @@ class ArxivPaper:
             except Exception as e:
                 logger.debug(f"Failed to extract affiliations of {self.arxiv_id}: {e}")
                 return None
-            return affiliations
+        
+        return affiliations

@@ -8,7 +8,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from pyzotero import zotero
 from recommender import rerank_paper
 from construct_email import render_email, send_email
-from tqdm import trange,tqdm
+from tqdm import trange, tqdm
 from loguru import logger
 from gitignore_parser import parse_gitignore
 from tempfile import mkstemp
@@ -16,24 +16,26 @@ from paper import ArxivPaper
 from llm import set_global_llm
 import feedparser
 
-def get_zotero_corpus(id:str,key:str) -> list[dict]:
+def get_zotero_corpus(id:str, key:str) -> list[dict]:
     zot = zotero.Zotero(id, 'user', key)
     collections = zot.everything(zot.collections())
     collections = {c['key']:c for c in collections}
     corpus = zot.everything(zot.items(itemType='conferencePaper || journalArticle || preprint'))
     corpus = [c for c in corpus if c['data']['abstractNote'] != '']
+
     def get_collection_path(col_key:str) -> str:
         if p := collections[col_key]['data']['parentCollection']:
             return get_collection_path(p) + '/' + collections[col_key]['data']['name']
         else:
             return collections[col_key]['data']['name']
+
     for c in corpus:
         paths = [get_collection_path(col) for col in c['data']['collections']]
         c['paths'] = paths
     return corpus
 
 def filter_corpus(corpus:list[dict], pattern:str) -> list[dict]:
-    _,filename = mkstemp()
+    _, filename = mkstemp()
     with open(filename,'w') as file:
         file.write(pattern)
     matcher = parse_gitignore(filename,base_dir='./')
@@ -74,9 +76,6 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     return papers
 
 
-
-parser = argparse.ArgumentParser(description='Recommender system for academic papers')
-
 def add_argument(*args, **kwargs):
     def get_env(key:str,default=None):
         # handle environment variables generated at Workflow runtime
@@ -98,19 +97,67 @@ def add_argument(*args, **kwargs):
         parser.set_defaults(**{arg_full_name:env_value})
 
 
+parser = argparse.ArgumentParser(description='Recommender system for academic papers')
+
 if __name__ == '__main__':
     
-    add_argument('--zotero_id', type=str, help='Zotero user ID')
-    add_argument('--zotero_key', type=str, help='Zotero API key')
-    add_argument('--zotero_ignore',type=str,help='Zotero collection to ignore, using gitignore-style pattern.')
-    add_argument('--send_empty', type=bool, help='If get no arxiv paper, send empty email',default=False)
-    add_argument('--max_paper_num', type=int, help='Maximum number of papers to recommend',default=100)
-    add_argument('--arxiv_query', type=str, help='Arxiv search query')
-    add_argument('--smtp_server', type=str, help='SMTP server')
-    add_argument('--smtp_port', type=int, help='SMTP port')
-    add_argument('--sender', type=str, help='Sender email address')
-    add_argument('--receiver', type=str, help='Receiver email address')
-    add_argument('--sender_password', type=str, help='Sender email password')
+    add_argument(
+        '--zotero_id',
+        type=str,
+        help='Zotero user ID'
+    )
+    add_argument(
+        '--zotero_key',
+        type=str,
+        help='Zotero API key'
+    )
+    add_argument(
+        '--zotero_ignore',
+        type=str,
+        help='Zotero collection to ignore, using gitignore-style pattern.'
+    )
+    add_argument(
+        '--send_empty',
+        type=bool,
+        help='If get no arxiv paper, send empty email',
+        default=False
+    )
+    add_argument(
+        '--max_paper_num',
+        type=int,
+        help='Maximum number of papers to recommend',
+        default=100
+    )
+    add_argument(
+        '--arxiv_query',
+        type=str,
+        help='Arxiv search query'
+    )
+    add_argument(
+        '--smtp_server',
+        type=str,
+        help='SMTP server'
+    )
+    add_argument(
+        '--smtp_port',
+        type=int,
+        help='SMTP port'
+    )
+    add_argument(
+        '--sender',
+        type=str,
+        help='Sender email address'
+    )
+    add_argument(
+        '--receiver',
+        type=str,
+        help='Receiver email address'
+    )
+    add_argument(
+        '--sender_password',
+        type=str,
+        help='Sender email password'
+    )
     add_argument(
         "--use_llm_api",
         type=bool,
@@ -141,11 +188,24 @@ if __name__ == '__main__':
         help="Language of TLDR",
         default="English",
     )
-    parser.add_argument('--debug', action='store_true', help='Debug mode')
+    add_argument(
+        "--use_llm",
+        type=bool,
+        help="Switch to turn off LLM",
+        default=True
+    )
+
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Debug mode'
+    )
+    
     args = parser.parse_args()
+    # If use_llm_api is True, openai_api_key must be provided
     assert (
         not args.use_llm_api or args.openai_api_key is not None
-    )  # If use_llm_api is True, openai_api_key must be provided
+    )
     if args.debug:
         logger.remove()
         logger.add(sys.stdout, level="DEBUG")
@@ -153,6 +213,9 @@ if __name__ == '__main__':
     else:
         logger.remove()
         logger.add(sys.stdout, level="INFO")
+
+    if not args.use_llm:
+        logger.info("USE_LLM is set to False")
 
     logger.info("Retrieving Zotero corpus...")
     corpus = get_zotero_corpus(args.zotero_id, args.zotero_key)
@@ -164,17 +227,30 @@ if __name__ == '__main__':
     logger.info("Retrieving Arxiv papers...")
     papers = get_arxiv_paper(args.arxiv_query, args.debug)
     if len(papers) == 0:
-        logger.info("No new papers found. Yesterday maybe a holiday and no one submit their work :). If this is not the case, please check the ARXIV_QUERY.")
+        logger.info(
+            "No new papers found. "
+            "Yesterday maybe a holiday and no one submit their work :). "
+            "If this is not the case, please check the ARXIV_QUERY."
+        )
         if not args.send_empty:
           exit(0)
     else:
+        for p in papers:
+            if not args.use_llm:
+                p.disable_llm()
+
         logger.info("Reranking papers...")
         papers = rerank_paper(papers, corpus)
         if args.max_paper_num != -1:
             papers = papers[:args.max_paper_num]
         if args.use_llm_api:
             logger.info("Using OpenAI API as global LLM.")
-            set_global_llm(api_key=args.openai_api_key, base_url=args.openai_api_base, model=args.model_name, lang=args.language)
+            set_global_llm(
+                api_key=args.openai_api_key,
+                base_url=args.openai_api_base,
+                model=args.model_name,
+                lang=args.language
+            )
         else:
             logger.info("Using Local LLM as global LLM.")
             set_global_llm(lang=args.language)
@@ -182,5 +258,8 @@ if __name__ == '__main__':
     html = render_email(papers)
     logger.info("Sending email...")
     send_email(args.sender, args.receiver, args.sender_password, args.smtp_server, args.smtp_port, html)
-    logger.success("Email sent successfully! If you don't receive the email, please check the configuration and the junk box.")
+    logger.success(
+        "Email sent successfully! "
+        "If you don't receive the email, please check the configuration and the junk box."
+    )
 
